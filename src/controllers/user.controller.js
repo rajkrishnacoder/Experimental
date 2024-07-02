@@ -5,6 +5,7 @@ import { User } from "../models/user.model.js"
 import { ApiResponse } from "../utils/ApiResponse.js"
 import jwt from "jsonwebtoken"
 import { extractPublicId } from 'cloudinary-build-url'
+import mongoose from "mongoose"
 
 const generateAccescAndRefreshTokens = async (userId)=>{
     try {
@@ -257,6 +258,120 @@ const updateUserAvatar = asyncHandler(async (req, res)=>{
 })
 
 
+const getUserChannelProfile = asyncHandler(async (req, res)=>{
+    const {username} = req.params
+
+    if(!username?.trim()) throw new ApiError(400, "username is missing")
+
+    const channel = await User.aggregate([
+        {
+            $match: {
+                username: username?.toLowerCase()
+            }
+        },
+        {
+            $lookup:{
+                from: "subscribers",
+                localField: "_id",
+                foreignField: "channel",
+                as: "subscriber"
+            }
+        },
+        {
+            $lookup:{
+                from: "subscribers",
+                localField: "_id",
+                foreignField: "subscriber",
+                as: "subscribe"
+            }
+        },
+        {
+            $addFields:{
+                totalSubscriber: {
+                    $size: "$subscriber",
+                },
+                totalSubscribe: {
+                    $size: "$subscribe"
+                },
+                isSubscribe: {
+                    $cond:{
+                        $if: {$in: [req.user?._id, "$subscribe.subscriber"]},
+                        then: true,
+                        else: false
+                    }
+                }
+            }
+        },
+        {
+            $project:{
+                fullName: 1,
+                username: 1,
+                avatar: 1,
+                coverImage: 1,
+                email: 1,
+                totalSubscriber: 1,
+                totalSubscribe: 1,
+                isSubscribe: 1
+            }
+        }
+    ])
+
+    if(!channel) throw new ApiError(404, "channel does dot exists")
+
+    return res.status(200)
+    .json(new ApiResponse(200, channel[0], "user channel fetched successfully"))
+})
+
+
+const getWatchHistory = asyncHandler(async (req, res)=>{
+    const user = await User.aggregate([
+        {
+            $match: {
+                _id: new mongoose.Types.ObjectId(req.user._id)
+            }
+        },
+        {
+            $lookup:{
+                from: "videos",
+                localField: "watchHistory",
+                foreignField: "_id",
+                as: "watchHistory",
+                pipeline: [
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "users",
+                            as: "owner",
+                            pipeline: [
+                                {
+                                    $project: {
+                                        fullname: 1,
+                                        avatar: 1,
+                                        username: 1
+                                    }
+                                }   
+                            ]
+                        }
+                    },
+                    {
+                        $addFields: {
+                            owner: {
+                                $first: "$owner"
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    ])
+
+    if(!user) throw new ApiError(404, "user does not exist")
+
+    return res.status(200)
+    .json(new ApiResponse(200, user[0].watchHistory, "watch history fetched successfully"))
+    
+})
 
 export {
     registerUser,
